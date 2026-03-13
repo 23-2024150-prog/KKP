@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <style>
+        /* ...元のCSS... */
+        #online-menu { position: absolute; inset: 0; background: #fff; z-index: 60; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
+        input { padding: 10px; font-size: 16px; border: 2px solid #ddd; border-radius: 8px; }
+    </style>
+</head>
+<body>
+
+<div id="online-menu">
+    <h1>Emoji Tactics Online</h1>
+    <div id="menu-main">
+        <button onclick="showCreate()">ルームを作る (HOST)</button><br><br>
+        <button onclick="showJoin()">ルームに入る (GUEST)</button>
+    </div>
+
+    <div id="menu-create" style="display:none;">
+        <h3>ルール設定</h3>
+        ベースHP: <input type="number" id="set-hp" value="2000"><br>
+        MP回復倍率: <input type="number" id="set-mp" value="1.0" step="0.1"><br>
+        <button onclick="createRoom()">この設定で作成</button>
+    </div>
+
+    <div id="menu-join" style="display:none;">
+        <input type="text" id="join-code" placeholder="ルームコード入力">
+        <button onclick="joinRoom()">参加</button>
+    </div>
+    
+    <p id="status-msg"></p>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+let myRoomCode = null;
+let isHost = false;
+
+// --- オンライン管理ロジック ---
+function showCreate() { document.getElementById('menu-main').style.display='none'; document.getElementById('menu-create').style.display='block'; }
+function showJoin() { document.getElementById('menu-main').style.display='none'; document.getElementById('menu-join').style.display='block'; }
+
+function createRoom() {
+    isHost = true;
+    const settings = {
+        hp: parseInt(document.getElementById('set-hp').value),
+        mpRate: parseFloat(document.getElementById('set-mp').value)
+    };
+    socket.emit('createRoom', settings);
+}
+
+function joinRoom() {
+    isHost = false;
+    const code = document.getElementById('join-code').value.toUpperCase();
+    socket.emit('joinRoom', code);
+}
+
+socket.on('roomCreated', (code) => {
+    myRoomCode = code;
+    document.getElementById('status-msg').innerText = `ルームコード: ${code} \n相手を待っています...`;
+});
+
+socket.on('playerJoined', (settings) => {
+    // ホストの決めたルールを適用
+    players[1].hp = players[2].hp = settings.hp;
+    mpRegenSpeed = 0.22 * settings.mpRate; // ルール適用
+    
+    document.getElementById('online-menu').style.display = 'none';
+    // 次にセットアップ画面を表示
+    alert(isHost ? "ゲストが参加しました！" : "ホストに接続しました！");
+});
+
+// --- ゲームロジックとの統合 ---
+// 元の mousedown イベント内を修正
+canvas.addEventListener('mousedown', e => {
+    if (!gameRunning) return;
+    const p1Type = players[1].deck[players[1].selected];
+    const p1X = canvas.width - 100 - (canvas.width/2 - 100) * p1Type.range;
+    
+    if (e.clientX >= p1X && players[1].mp >= p1Type.cost) {
+        const unitData = {
+            x: e.clientX, y: e.clientY, 
+            typeIdx: players[1].selected, // どのユニットか
+            owner: 1,
+            roomCode: myRoomCode
+        };
+        // 自分の画面に出す
+        spawnUnitLocal(unitData.x, unitData.y, 1, p1Type);
+        // 相手に送る（座標は反転させる必要がある点に注意）
+        socket.emit('spawnUnit', {
+            ...unitData,
+            // 相手視点では座標が左右反転するように送る
+            x: canvas.width - e.clientX 
+        });
+        players[1].mp -= p1Type.cost;
+    }
+});
+
+socket.on('enemySpawn', (data) => {
+    // 相手が召喚したユニットを自分の画面のPlayer2(赤)として表示
+    const unitType = players[2].deck[data.typeIdx];
+    spawnUnitLocal(data.x, data.y, 2, unitType);
+});
+
+function spawnUnitLocal(x, y, owner, type) {
+    units.push(new Unit(x, y, owner, type));
+}
+
+// ...以下、元の Unit クラスや loop 処理...
+// (CPUモードのロジックは online 時は無効化する)
+</script>
+</body>
+</html>
